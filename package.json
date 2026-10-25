@@ -9,10 +9,14 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "test": "turbo run test",
-    "lint": "turbo run lint"
+    "dev:api": "npm --workspace=@tle/api run dev",
+    "dev:web": "npm --workspace=@tle/web run dev",
+    "build": "npm --workspace=@tle/shared-types run build && npm --workspace=@tle/api run build && npm --workspace=@tle/web run build",
+    "ingest": "python services/api/src/ingestion/pipeline.py --pack \"03_Ragnarok Trial of the Nine Realms/dev_pack_E5\"",
+    "test:ingestion": "python tests/test_integrity_and_extraction.py",
+    "test:retrieval": "python tests/test_search_filters.py",
+    "test:courtroom": "npx tsx tests/test_courtroom_trial.ts",
+    "test": "npm run test:ingestion && npm run test:retrieval && npm run test:courtroom"
   },
   "devDependencies": {
     "typescript": "^5.3.3"

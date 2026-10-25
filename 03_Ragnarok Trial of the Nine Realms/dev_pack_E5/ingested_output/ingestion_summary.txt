@@ -1,0 +1,35 @@
+================================================================================
+RUNEMARK TRIAL OF THE NINE REALMS — INGESTION SUMMARY REPORT
+================================================================================
+Execution Timestamp: 2026-10-25T12:21:18.472586Z
+Pack: dev_pack_E5 (Event: E5)
+As-Of Date Clock: 2027-01-25
+Elapsed Processing Time: 273.34 seconds
+
+CORPUS INTEGRITY & CHECKSUM AUDIT:
+--------------------------------------------------------------------------------
+Total Expected in Manifest:  76
+Files Present on Disk:       76
+SHA-256 Checksums Verified:  76 / 76 (100%)
+Corpus Intact:               True
+
+DOCUMENT EXTRACTION & NORMALIZATION:
+--------------------------------------------------------------------------------
+Successfully Extracted:      75
+Flagged / Damaged Documents: 1
+Failed Documents:            0
+Total Document Records:      76
+
+PARAGRAPH-AWARE CHUNKING & EMBEDDINGS:
+--------------------------------------------------------------------------------
+Total Chunks Generated:      75
+Chunk Sizing Target:         ~512 tokens (approx 50-token overlap)
+Dense Vector Dimension:      1024 (nvidia/nemotron-3.5-embed-8b:free)
+Embeddings Generated:        75
+PostgreSQL Persistence:      PREPARED (JSON BUNDLE AVAILABLE)
+
+FLAGGED / DAMAGED ITEMS LOG:
+--------------------------------------------------------------------------------
+- [ORV-0023] File: ORV-0023.txt -> Reason: Empty file (0 bytes)
+
+================================================================================
