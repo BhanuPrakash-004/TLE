@@ -10,6 +10,8 @@
  */
 
 import { GroundedClaim, DocumentChunk } from '@tle/shared-types';
+import { retrieveDynamicContext } from '../ai/dynamicRetriever';
+import { callJsonLLM } from '../ai/llm';
 
 export interface LokiMemory {
   claimsBuilt: string[];
@@ -29,15 +31,36 @@ export class LokiAgent {
   /**
    * Round 1: Constructs the limited-exposure resilience case.
    */
-  public async buildInitialCase(caseId: string, chunks: DocumentChunk[]): Promise<GroundedClaim[]> {
-    const claims: GroundedClaim[] = [
+  public async buildInitialCase(
+    caseId: string,
+    chunks: DocumentChunk[],
+    question: string = '',
+    asOfDate: string = '2027-01-25'
+  ): Promise<GroundedClaim[]> {
+    const retrieval = retrieveDynamicContext(
+      `${question} mitigation alternative routing rail overland substitute reserves buffer`,
+      chunks,
+      asOfDate,
+      10
+    );
+
+    const docContextSnippet = retrieval.topChunks
+      .slice(0, 6)
+      .map(
+        (sc) =>
+          `[Doc ${sc.docId} | Tier ${sc.reliabilityTier} | Date ${sc.pubDate}]\n${sc.chunk.text.slice(0, 280)}...`
+      )
+      .join('\n\n');
+
+    const fallbackClaims: GroundedClaim[] = [
       {
         claimId: 'LOKI-CLAIM-01',
         caseId,
         agentRole: 'Loki',
         roundNumber: 1,
         category: 'ALTERNATIVE_ROUTING',
-        claimText: 'Ravik Rail Link actively cushions Orvan wheat outflows, maintaining 64,000 to 69,000 MT/month overland shipments to regional buyers.',
+        claimText:
+          'Ravik Rail Link actively cushions Orvan wheat outflows, maintaining 64,000 to 69,000 MT/month overland shipments to regional buyers.',
         citedDocIds: ['ORV-0001', 'ORV-0005', 'ORV-0050'],
         citedParagraphs: ['ORV-0001:P1', 'ORV-0005:P2', 'ORV-0050:P2'],
         exposureEstimate: {
@@ -55,7 +78,8 @@ export class LokiAgent {
         agentRole: 'Loki',
         roundNumber: 1,
         category: 'ALTERNATIVE_ROUTING',
-        claimText: 'Tolan and Midgard buyers have rapidly substituted Orvan sea shortfalls with grain cargoes from Vanir (54,000-58,000 MT/month) and commercial reserves.',
+        claimText:
+          'Tolan and Midgard buyers have rapidly substituted Orvan sea shortfalls with grain cargoes from Vanir (54,000-58,000 MT/month) and commercial reserves.',
         citedDocIds: ['ORV-0006', 'ORV-0040', 'ORV-0042', 'ORV-0044'],
         citedParagraphs: ['ORV-0040:P1', 'ORV-0042:P1', 'ORV-0044:P2'],
         exposureEstimate: {
@@ -73,7 +97,8 @@ export class LokiAgent {
         agentRole: 'Loki',
         roundNumber: 1,
         category: 'PRICE_BUFFER',
-        claimText: 'Commercial grain markets have largely stabilized and absorbed the corridor lapse through alternative supply agreements with minimal net disruption.',
+        claimText:
+          'Commercial grain markets have completely stabilized and absorbed the corridor lapse through alternative supply agreements with minimal net disruption.',
         citedDocIds: ['ORV-0004'],
         citedParagraphs: ['ORV-0004:P1', 'ORV-0004:P2'],
         exposureEstimate: {
@@ -87,57 +112,155 @@ export class LokiAgent {
       },
     ];
 
-    this.memory.claimsBuilt = claims.map((c) => c.claimId);
-    return claims;
+    const systemPrompt = `You are Loki, Defense Advocate & Commercial Mitigator in the Runemark Courtroom.
+Your objective is to prove that commercial trade exposure is LIMITED by demonstrating viable alternatives (rail lines, secondary sea corridors, inventory stockpiles, price adjustments).
+You must cite exact doc IDs and paragraph references.
+Provide low exposure numerical estimates in MT/month or value.`;
+
+    const userPrompt = `Disruption Query: "${question}"
+Simulated Date: ${asOfDate}
+
+Available Documents:
+${docContextSnippet}
+
+Construct 2 to 3 mitigation claims in this JSON array structure:
+[
+  {
+    "claimId": "LOKI-CLAIM-01",
+    "category": "ALTERNATIVE_ROUTING" or "PRICE_BUFFER",
+    "claimText": "Defense argument demonstrating mitigation, rerouting, or buffers",
+    "citedDocIds": ["ORV-0001", "ORV-0042"],
+    "citedParagraphs": ["ORV-0001:P1"],
+    "exposureEstimate": {
+      "min": 25000,
+      "max": 45000,
+      "commodity": "Wheat",
+      "unit": "MT/month"
+    },
+    "isFactOrInference": "Fact"
+  }
+]`;
+
+    const llmClaims = await callJsonLLM<GroundedClaim[]>(
+      systemPrompt,
+      userPrompt,
+      fallbackClaims,
+      { maxTokens: 1200 }
+    );
+
+    const validatedClaims: GroundedClaim[] = (
+      Array.isArray(llmClaims) && llmClaims.length > 0 ? llmClaims : fallbackClaims
+    ).map((c, idx) => ({
+      ...c,
+      claimId: c.claimId || `LOKI-CLAIM-0${idx + 1}`,
+      caseId,
+      agentRole: 'Loki',
+      roundNumber: 1,
+      isConceded: false,
+      exposureEstimate: c.exposureEstimate || fallbackClaims[0].exposureEstimate,
+    }));
+
+    // Ensure LOKI-CLAIM-03 (overstated complete market stabilization) is present for debate
+    if (!validatedClaims.some((c) => c.category === 'PRICE_BUFFER')) {
+      validatedClaims.push(fallbackClaims[2]);
+    }
+
+    this.memory.claimsBuilt = validatedClaims.map((c) => c.claimId);
+    return validatedClaims;
   }
 
   /**
    * Round 1 Cross-Examination: Attack Thor's worst-case claims.
    */
-  public attackThorCase(thorClaims: GroundedClaim[]): Array<{ targetClaimId: string; challengeText: string; docId: string }> {
+  public attackThorCase(
+    thorClaims: GroundedClaim[]
+  ): Array<{ targetClaimId: string; challengeText: string; docId: string }> {
     const attacks = [];
 
-    // Attack Thor's Quay Collapse Claim (THOR-CLAIM-03)
-    const quayClaim = thorClaims.find((c) => c.claimId === 'THOR-CLAIM-03');
+    // Attack Thor's Quay Collapse Claim (THOR-CLAIM-03 / ORV-0010)
+    const quayClaim = thorClaims.find(
+      (c) =>
+        (c.citedDocIds || []).includes('ORV-0010') ||
+        c.claimText.toLowerCase().includes('entire quay')
+    );
+
     if (quayClaim) {
-      const challenge = {
+      attacks.push({
         targetClaimId: quayClaim.claimId,
-        challengeText: 'Thor cites a Tier 4 tabloid rumor (ORV-0010). Official Realm Trade Ministry bulletins (ORV-0008, ORV-0012, ORV-0035) prove the port quay is NOT destroyed; berths remain active and loaded at index 30-40.',
+        challengeText:
+          'Thor relies on unverified Tier 4 social media rumors (ORV-0010 Saga Chat). Official Port loading indices (ORV-0012, Tier 1) and Customs data prove the quay is fully intact and still handling 30-38% of normal loading capacity.',
         docId: 'ORV-0012',
-      };
-      attacks.push(challenge);
-      this.memory.attacksDelivered.push(`Debunked ${quayClaim.claimId} using ORV-0012`);
+      });
     }
 
+    // Attack Thor's gross volume drop claim
+    const grossClaim = thorClaims.find(
+      (c) => c.category === 'VOLUME_DROP' && c.claimId !== quayClaim?.claimId
+    );
+    if (grossClaim) {
+      attacks.push({
+        targetClaimId: grossClaim.claimId,
+        challengeText:
+          'Thor treats gross sea transit disruption as net commercial collapse, completely ignoring Ravik overland rail diversions and Vanir replacement cargoes.',
+        docId: 'ORV-0001',
+      });
+    }
+
+    this.memory.attacksDelivered = attacks.map((a) => a.targetClaimId);
     return attacks;
   }
 
   /**
-   * Concede or Adjust Claims when confronted with Thor's counter-evidence.
+   * Concession Evaluation: When Loki's overstated full stabilization claim is attacked.
    */
-  public evaluateConcessions(claims: GroundedClaim[], counterAttacks: any[]): GroundedClaim[] {
-    for (const claim of claims) {
-      // Concede over-optimistic full market stabilization claim (LOKI-CLAIM-03)
-      if (claim.claimId === 'LOKI-CLAIM-03') {
-        claim.isConceded = true;
-        claim.concessionReason = 'Conceded in cross-examination: While Vantro Trading notes market adaptation (ORV-0004), physical transit figures (ORV-0050, ORV-0042) demonstrate substantial physical deficit remains unfilled by alternatives.';
+  public evaluateConcessions(
+    lokiClaims: GroundedClaim[],
+    thorAttacks: Array<{ targetClaimId: string; challengeText: string; docId: string }>
+  ): GroundedClaim[] {
+    return lokiClaims.map((claim) => {
+      const isStabilizationClaim =
+        claim.category === 'PRICE_BUFFER' ||
+        claim.claimText.toLowerCase().includes('completely stabilized') ||
+        claim.claimText.toLowerCase().includes('largely stabilized');
+
+      if (isStabilizationClaim) {
         this.memory.concededClaimIds.push(claim.claimId);
+        return {
+          ...claim,
+          isConceded: true,
+          concessionReason:
+            'Loki concedes claim: Regional price indexes (ORV-0017) confirm agricultural spot prices spiked 42%, contradicting the assertion of full market stabilization.',
+        };
       }
-    }
-    return claims;
+      return claim;
+    });
   }
 
   /**
-   * Round 2 Defense: Incorporates new evidence following Odin's remand.
+   * Round 2 Defense: Calibrates mitigation bounds after sufficiency search.
    */
-  public defendInRound2(claims: GroundedClaim[], newChunks: DocumentChunk[]): GroundedClaim[] {
-    this.memory.defenseStrategies.push('Round 2: Calibrated rail mitigation to partial offset (25,000 MT/month) acknowledging siding constraints in ORV-0050.');
-    for (const c of claims) {
-      if (c.claimId === 'LOKI-CLAIM-01' && !c.isConceded) {
-        c.defenseEvidenceDocIds = ['ORV-0001', 'ORV-0044'];
+  public defendInRound2(
+    lokiClaims: GroundedClaim[],
+    targetedChunks: DocumentChunk[]
+  ): GroundedClaim[] {
+    this.memory.defenseStrategies.push('Round 2: Calibrated rail mitigation to 35,000-45,000 MT acknowledging sidings');
+
+    return lokiClaims.map((claim) => {
+      if (claim.claimId === 'LOKI-CLAIM-01') {
+        return {
+          ...claim,
+          claimText:
+            'Ravik Rail provides steady mitigation, absorbing 38,000 to 45,000 MT/month of wheat deliveries to Midgard, constrained by siding turnarounds (ORV-0050).',
+          exposureEstimate: {
+            min: 38000,
+            max: 48000,
+            commodity: 'Wheat',
+            unit: 'MT/month',
+          },
+        };
       }
-    }
-    return claims;
+      return claim;
+    });
   }
 
   public getMemory(): LokiMemory {

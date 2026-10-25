@@ -116,11 +116,11 @@ export class CourtroomOrchestrator {
     emitStep('ROUND_1_ARGUMENTS_START', 1, 'Court', 'Convening prosecution and defense arguments', null);
     
     // Thor builds High-Exposure prosecution
-    const thorInitialClaims = await this.thor.buildInitialCase(caseFile.caseId, this.chunks);
+    const thorInitialClaims = await this.thor.buildInitialCase(caseFile.caseId, this.chunks, question, asOfDate);
     emitStep('THOR_HIGH_CASE_SUBMITTED', 1, 'Thor', 'Submitted high commercial exposure claims', thorInitialClaims);
 
     // Loki builds Limited-Exposure defense
-    const lokiInitialClaims = await this.loki.buildInitialCase(caseFile.caseId, this.chunks);
+    const lokiInitialClaims = await this.loki.buildInitialCase(caseFile.caseId, this.chunks, question, asOfDate);
     emitStep('LOKI_LIMITED_CASE_SUBMITTED', 1, 'Loki', 'Submitted limited commercial exposure claims', lokiInitialClaims);
 
     // ==========================================
@@ -180,7 +180,14 @@ export class CourtroomOrchestrator {
     // STEP 9: Odin Executive Briefing & Exposure Table
     // ==========================================
     emitStep('ODIN_BRIEFING_SYNTHESIS', 2, 'Odin', 'Authoring final intelligence briefing', null);
-    const briefing = this.odin.authorExecutiveBriefing(caseFile.caseId, asOfDate, finalRulings);
+    const briefing = await this.odin.authorExecutiveBriefing(
+      caseFile.caseId,
+      asOfDate,
+      finalRulings,
+      question,
+      thorRound2Claims,
+      lokiRound2Claims
+    );
     trace.finalBriefing = briefing;
     emitStep('ODIN_BRIEFING_COMPLETE', 2, 'Odin', 'Executive Briefing published', briefing);
 

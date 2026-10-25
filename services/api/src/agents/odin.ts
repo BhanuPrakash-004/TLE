@@ -21,6 +21,7 @@ import {
   ExposureRange,
   ReliabilityTier,
 } from '@tle/shared-types';
+import { callJsonLLM } from '../ai/llm';
 
 export interface OdinMemory {
   round1Evaluations: string[];
@@ -49,7 +50,7 @@ export class OdinAgent {
     if (roundNumber === 1) {
       const remandReason =
         'Sufficiency check failed in Round 1: While baseline gross trade disruption is established, ' +
-        'the exact absorption capacity of the Ravik Rail Link and Vanir export throughput remain contested. ' +
+        'the exact absorption capacity of overland rail links and secondary export throughput remain contested. ' +
         'Remanding case to Heimdall for targeted Round 2 retrieval on rail sidings and port replacement capacities.';
       this.memory.sufficiencyDecisions.push(remandReason);
       return {
@@ -83,46 +84,45 @@ export class OdinAgent {
       let confidenceScore = 0.85;
       let reasoning = '';
       let nature: 'Fact' | 'Inference' = claim.isFactOrInference;
-      let primaryDocCitation = claim.citedDocIds[0] || 'ORV-0016';
+      let primaryDocCitation = (claim.citedDocIds && claim.citedDocIds[0]) || 'ORV-0016';
       let tier: ReliabilityTier = 2;
 
       // Handle Concessions First
       if (claim.isConceded) {
         rulingType = 'Conceded';
         confidenceScore = 0.99;
-        reasoning = claim.concessionReason || 'Claim conceded by advocating agent following indisputable counter-evidence.';
-      } else if (claim.claimId === 'THOR-CLAIM-01') {
-        // Physical sea disruption verified by Tier 1 loading indices
+        reasoning =
+          claim.concessionReason ||
+          'Claim conceded by advocating agent following indisputable counter-evidence.';
+      } else if (
+        claim.claimId.startsWith('THOR') &&
+        claim.category === 'VOLUME_DROP'
+      ) {
         rulingType = 'Established';
         confidenceScore = 0.94;
         nature = 'Fact';
         tier = 1;
         primaryDocCitation = 'ORV-0012:P2';
-        reasoning = 'Established: Realm Trade Ministry official indices (ORV-0012, ORV-0035) prove maritime loadings fell to 30-40% of baseline.';
-      } else if (claim.claimId === 'LOKI-CLAIM-01') {
-        // Overland rail buffer verified as partial bridge
+        reasoning =
+          'Gross port loading collapse confirmed by official maritime registers and customs clearance manifests.';
+      } else if (
+        claim.claimId === 'LOKI-CLAIM-01' ||
+        (claim.agentRole === 'Loki' && claim.category === 'ALTERNATIVE_ROUTING' && claim.isFactOrInference === 'Fact')
+      ) {
         rulingType = 'Established';
-        confidenceScore = 0.92;
+        confidenceScore = 0.88;
         nature = 'Fact';
         tier = 2;
         primaryDocCitation = 'ORV-0005:P2';
-        reasoning = 'Established: Monthly trade filings (ORV-0005, ORV-0050) confirm Ravik Rail carries 64k-69k MT/month, functioning as an active bridge.';
-      } else if (claim.claimId === 'LOKI-CLAIM-02') {
-        // Vanir substitution is verified in progress but contested in total net scale
+        reasoning =
+          'Overland rail bypass is actively operational, confirmed by railway cargo manifests and customs data.';
+      } else {
         rulingType = 'Contested';
-        confidenceScore = 0.78;
+        confidenceScore = 0.76;
         nature = 'Inference';
-        tier = 2;
-        primaryDocCitation = 'ORV-0042:P1';
-        reasoning = 'Contested: Vanir cargoes provide partial substitution (ORV-0044: 54k-58k MT), but Tolan Harbour berth congestion limits total throughput (ORV-0042).';
-      } else if (claim.claimId === 'THOR-CLAIM-02') {
-        // Tolan gross exposure
-        rulingType = 'Established';
-        confidenceScore = 0.90;
-        nature = 'Fact';
-        tier = 2;
-        primaryDocCitation = 'ORV-0046:P2';
-        reasoning = 'Established: Customs trade filings confirm Tolan baseline Orvan sea wheat imports of 114,000-122,000 MT/month dropped by over 60%.';
+        primaryDocCitation = (claim.citedDocIds && claim.citedDocIds[0]) || 'ORV-0042:P1';
+        reasoning =
+          'Contested: Secondary substitution volumes and berth turnaround times remain actively disputed between prosecution and defense.';
       }
 
       rulings.push({
@@ -146,13 +146,16 @@ export class OdinAgent {
 
   /**
    * Authors the final Executive Intelligence Briefing (FR8).
-   * Derived solely from Odin's rulings, not raw unadjudicated arguments.
+   * Dynamically derived from Odin's rulings, evidence context, and user question.
    */
-  public authorExecutiveBriefing(
+  public async authorExecutiveBriefing(
     caseId: string,
     asOfDate: string,
-    rulings: JudicialRuling[]
-  ): ExecutiveBriefing {
+    rulings: JudicialRuling[],
+    question: string = '',
+    thorClaims: GroundedClaim[] = [],
+    lokiClaims: GroundedClaim[] = []
+  ): Promise<ExecutiveBriefing> {
     const briefingId = `BRIEFING-${caseId}-${Date.now()}`;
     this.memory.briefingId = briefingId;
 
@@ -160,46 +163,71 @@ export class OdinAgent {
     const contested = rulings.filter((r) => r.ruling === 'Contested');
     const conceded = rulings.filter((r) => r.ruling === 'Conceded');
 
-    const executiveSummary =
-      `As of 25 January 2027, the termination of the Orvan Corridor Agreement (expired 10 September 2026 without renewal) ` +
-      `and accompanying port labour strikes have triggered a severe 60%–70% drop in maritime grain loadings from Orvan Grain Port [ORV-0012:P2, ORV-0035:P1]. ` +
-      `While Thor demonstrated significant gross sea deficits of 155,000–185,000 MT/month for Midgard and 70,000–85,000 MT/month for Tolan [ORV-0009:P2, ORV-0046:P2], ` +
-      `commercial exposure is partially cushioned by overland diversions via the Ravik Rail Link (~64,000–69,000 MT/month, ORV-0005:P2) and secondary bookings from Vanir [ORV-0042:P1, ORV-0044:P2]. ` +
-      `Thor's claim of physical port quay destruction was disproven and formally conceded [ORV-0010:P1, ORV-0008:P2]. ` +
-      `Accounting for rail siding bottlenecks [ORV-0050:P3] and Tolan berth congestion, net commercial deficit is calibrated at 95,000–125,000 MT/month for Midgard and 40,000–55,000 MT/month for Tolan.`;
+    // Calculate dynamic exposure bounds from active Thor and Loki claims
+    const activeThor = thorClaims.filter((c) => !c.isConceded);
+    const activeLoki = lokiClaims.filter((c) => !c.isConceded);
+
+    const thorMax = Math.max(
+      ...activeThor.map((c) => c.exposureEstimate?.max || 185000),
+      185000
+    );
+    const thorMin = Math.min(
+      ...activeThor.map((c) => c.exposureEstimate?.min || 140000),
+      140000
+    );
+
+    const lokiMin = Math.min(
+      ...activeLoki.map((c) => c.exposureEstimate?.min || 30000),
+      30000
+    );
+    const lokiMax = Math.max(
+      ...activeLoki.map((c) => c.exposureEstimate?.max || 48000),
+      48000
+    );
+
+    // Odin calculates balanced consensus: between gross deficit and optimistic mitigation
+    const odinMin = Math.round((thorMin * 0.55 + lokiMin * 0.45) / 1000) * 1000;
+    const odinMax = Math.round((thorMax * 0.65 + lokiMax * 0.35) / 1000) * 1000;
 
     const exposureTable = {
       thorExposure: {
-        min: 155000,
-        max: 185000,
-        commodity: 'Midgard Wheat (Gross Sea Deficit)',
+        min: thorMin,
+        max: thorMax,
+        commodity: 'Gross Deficit (Prosecution Worst-Case)',
         unit: 'MT/month',
       },
       lokiExposure: {
-        min: 30000,
-        max: 45000,
-        commodity: 'Midgard Wheat (Aggressive Offset)',
+        min: lokiMin,
+        max: lokiMax,
+        commodity: 'Cushioned Deficit (Defense Mitigation)',
         unit: 'MT/month',
       },
       odinExposure: {
-        min: 95000,
-        max: 125000,
-        commodity: 'Midgard Wheat (Net Judicial Calibration)',
+        min: odinMin,
+        max: odinMax,
+        commodity: 'Net Commercial Exposure (Judicial Consensus)',
         unit: 'MT/month',
       },
     };
 
+    const fallbackSummary =
+      `As of ${asOfDate}, the court evaluated trade disruption claims regarding: "${question || 'Regional supply chain disruption'}". ` +
+      `Official notices confirm corridor expiration and maritime loading drops to 30-38% of baseline [ORV-0012:P2, ORV-0016:P1]. ` +
+      `Thor established significant gross trade shortfalls of ${thorMin.toLocaleString()}–${thorMax.toLocaleString()} MT/month [ORV-0009:P2]. ` +
+      `However, Loki proved viable overland mitigation via the Ravik Rail Link (~38,000–48,000 MT/month, ORV-0050:P2) and secondary sea bookings [ORV-0042:P1]. ` +
+      `Thor's catastrophic claim of quay destruction was disproven and conceded [ORV-0010:P1, ORV-0012:P1], while Loki conceded full market stabilization [ORV-0017:P1]. ` +
+      `Accounting for rail siding bottlenecks and berth congestion, net commercial exposure is calibrated at ${odinMin.toLocaleString()}–${odinMax.toLocaleString()} MT/month.`;
+
     const nextQuarterOutlook = {
       projection:
-        'For Q1 2027, net import deficits will persist at approximately 40%–45% below historical baselines before spring berth stabilization. Domestic flour millers will exhaust emergency buffers by late February, increasing reliance on Vanir supplies and rail allocations.',
+        'For Q1 2027, net import deficits will persist at approximately 35%–45% below historical baselines before secondary shipping routes and rail terminal expansions take full effect.',
       statedAssumptions: [
-        'Orvan dock strike berths remain constrained at index 30-40 through mid-February 2027.',
-        'Ravik Rail Link operates at peak siding capacity with no major mechanical derailments.',
-        'Vanir export terminals maintain current weekly vessel dispatch quotas to Tolan Harbour.',
-        'No simulated clock violations: All evidence dated on or prior to 25 January 2027.',
+        `All findings strictly verified as of simulated clock ${asOfDate}; documents published later are excluded.`,
+        'Ravik Rail Link operates continuously at maximum siding throughput with no severe winter closures.',
+        'Secondary grain cargoes from regional partners maintain scheduled vessel dispatches.',
       ],
       riskFactors: [
-        'Prolonged freeze on the Ravik rail pass could sever the sole remaining overland grain link.',
+        'Prolonged sub-zero freeze across high mountain rail passes threatening train axle loads.',
         'Secondary tariff escalation by neighboring transit nations.',
       ],
     };
@@ -218,63 +246,76 @@ export class OdinAgent {
         citationMarker: '[ORV-0012:P2]',
         docId: 'ORV-0012',
         paragraph: 'P2',
-        outlet: 'Realm Trade Ministry',
+        outlet: 'Orvan Maritime Bureau',
         tier: 1 as ReliabilityTier,
-        pubDate: '2026-12-15',
-        quote: 'Port loading index for grain leaving Orvan Grain Port by sea fell to 40 in September, 38 in October.',
+        pubDate: '2026-10-14',
+        quote: 'Grain terminal throughput index registered 34% of 2025 monthly average.',
       },
       {
-        citationMarker: '[ORV-0035:P1]',
-        docId: 'ORV-0035',
-        paragraph: 'P1',
-        outlet: 'Raven Wire',
-        tier: 2 as ReliabilityTier,
-        pubDate: '2027-01-14',
-        quote: 'December port loading index preliminary figures registered at 30 against a baseline of 100.',
-      },
-      {
-        citationMarker: '[ORV-0009:P2]',
-        docId: 'ORV-0009',
-        paragraph: 'P2',
-        outlet: 'Realm Trade Ministry',
-        tier: 1 as ReliabilityTier,
-        pubDate: '2027-01-19',
-        quote: 'Orvan to Midgard wheat monthly baseline reached 250,000 tonnes in July and 267,000 tonnes in August 2026.',
-      },
-      {
-        citationMarker: '[ORV-0005:P2]',
-        docId: 'ORV-0005',
-        paragraph: 'P2',
-        outlet: 'Raven Wire',
-        tier: 2 as ReliabilityTier,
-        pubDate: '2027-01-21',
-        quote: 'Ravik Rail Link wheat route sustained 64,000 to 69,000 tonnes monthly throughput.',
-      },
-      {
-        citationMarker: '[ORV-0050:P3]',
+        citationMarker: '[ORV-0050:P2]',
         docId: 'ORV-0050',
-        paragraph: 'P3',
-        outlet: 'Cargo Weekly',
+        paragraph: 'P2',
+        outlet: 'Trans-Runemark Logistics Gazette',
         tier: 2 as ReliabilityTier,
         pubDate: '2026-11-20',
-        quote: 'Ravik rail is a single corridor with limited sidings and cannot absorb the lost sea volumes.',
+        quote: 'Ravik rail corridor expanded grain hopper dispatches to 1,400 wagons monthly, though passing sidings operate near capacity.',
       },
       {
-        citationMarker: '[ORV-0046:P2]',
-        docId: 'ORV-0046',
-        paragraph: 'P2',
-        outlet: 'Cargo Weekly',
+        citationMarker: '[ORV-0042:P1]',
+        docId: 'ORV-0042',
+        paragraph: 'P1',
+        outlet: 'Northern Merchant Post',
         tier: 2 as ReliabilityTier,
-        pubDate: '2027-01-20',
-        quote: 'Orvan to Tolan wheat baseline shipments stood at 114,000 to 122,000 tonnes monthly.',
+        pubDate: '2026-11-05',
+        quote: 'Midgard millers secure 54,000 MT replacement wheat from Vanir elevators.',
       },
     ];
+
+    // Optional dynamic LLM polish for executive summary if available
+    let dynamicSummary = fallbackSummary;
+    try {
+      const systemPrompt = `You are Odin, Allfather and Chief Justice presiding over the Runemark Trade Network Courtroom.
+Your task is to author the final Executive Intelligence Briefing in authoritative judicial prose.
+Directly answer the user's specific disruption question as of ${asOfDate}.
+Integrate bracketed citations like [ORV-0016:P1], [ORV-0012:P2], [ORV-0050:P2], and cite the calibrated net numbers.`;
+
+      const userPrompt = `Disruption Question: "${question}"
+Adjudicated Numbers:
+- Thor Gross Disruption: ${thorMin.toLocaleString()} to ${thorMax.toLocaleString()} MT/month
+- Loki Mitigation: ${lokiMin.toLocaleString()} to ${lokiMax.toLocaleString()} MT/month
+- Odin Net Calibration: ${odinMin.toLocaleString()} to ${odinMax.toLocaleString()} MT/month
+- Established Claims: ${established.length}
+- Contested Claims: ${contested.length}
+- Conceded Claims: ${conceded.length} (Quay destruction conceded by Thor; full stabilization conceded by Loki)
+
+Return JSON with exact keys:
+{
+  "executiveSummary": "2-3 comprehensive judicial paragraphs with inline citations and numbers",
+  "projection": "Concise next-quarter forecast with operational trajectory"
+}`;
+
+      const llmResult = await callJsonLLM<{ executiveSummary?: string; projection?: string }>(
+        systemPrompt,
+        userPrompt,
+        { executiveSummary: fallbackSummary, projection: nextQuarterOutlook.projection },
+        { maxTokens: 900 }
+      );
+
+      if (llmResult.executiveSummary && llmResult.executiveSummary.length > 80) {
+        dynamicSummary = llmResult.executiveSummary;
+      }
+      if (llmResult.projection) {
+        nextQuarterOutlook.projection = llmResult.projection;
+      }
+    } catch {
+      // Use fallback
+    }
 
     return {
       briefingId,
       caseId,
       asOfDate,
-      executiveSummary,
+      executiveSummary: dynamicSummary,
       exposureTable,
       establishedFindings: established,
       contestedFindings: contested,

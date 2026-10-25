@@ -1,14 +1,113 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  color-scheme: dark;
+  --bg-cream: #FBF9F5;
+  --bg-cream-card: #FFFFFF;
+  --bg-cream-subtle: #F5F1E9;
+  --border-cream: #EAE5DC;
+  --border-cream-dark: #DDD6C9;
+  
+  --text-primary: #121316;
+  --text-secondary: #57585E;
+  --text-muted: #8A8B93;
+
+  --orange-primary: #FF5500;
+  --orange-hover: #E04B00;
+  --orange-light: #FFF5EE;
+  --orange-border: #FFD8C2;
+  --orange-glow: rgba(255, 85, 0, 0.2);
+
+  --black-primary: #111216;
+  --black-secondary: #1E2026;
+  --black-card: #16171D;
+
+  --success-green: #10B981;
+  --success-bg: #ECFDF5;
+  --success-border: #A7F3D0;
+
+  --danger-red: #EF4444;
+  --danger-bg: #FEF2F2;
+  --danger-border: #FECACA;
+
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background-color: #0b0f19;
-  color: #f8fafc;
+  padding: 0;
+  background-color: var(--bg-cream);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button {
+  font-family: inherit;
   cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+textarea, input {
+  font-family: inherit;
+}
+
+code, pre {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-cream-subtle);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-cream-dark);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes pulseOrange {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 85, 0, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 85, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 85, 0, 0);
+  }
+}
+
+.pulse-orange {
+  animation: pulseOrange 2s infinite;
 }

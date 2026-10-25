@@ -47,13 +47,35 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-export async function startServer(port: number = 3000): Promise<void> {
-  return new Promise((resolve) => {
-    app.listen(port, () => {
-      console.log(`[API Server] Running on http://localhost:${port}`);
-      resolve();
+export async function startServer(preferredPort: number = 3000): Promise<void> {
+  let port = preferredPort;
+  const maxAttempts = 10;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const success = await new Promise<boolean>((resolve) => {
+      const server = app.listen(port, () => {
+        console.log(`[API Server] Running on http://localhost:${port}`);
+        resolve(true);
+      });
+
+      server.on('error', (err: any) => {
+        if (err.code === 'EADDRINUSE') {
+          console.log(`[API Server] Port ${port} is in use, trying port ${port + 1}...`);
+          port++;
+          resolve(false);
+        } else {
+          console.error('[API Server Error]:', err);
+          resolve(false);
+        }
+      });
     });
-  });
+
+    if (success) {
+      return;
+    }
+  }
+
+  throw new Error(`Could not find an open port starting from ${preferredPort}`);
 }
 
 if (require.main === module) {
