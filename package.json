@@ -1,0 +1,20 @@
+{
+  "name": "tle-ragnarok",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Adversarial Multi-Agent Courtroom System for Supply Chain Disruption Intelligence",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
