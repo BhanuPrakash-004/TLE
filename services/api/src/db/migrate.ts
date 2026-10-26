@@ -1,8 +1,39 @@
+/**
+ * Migration Runner
+ * ================
+ * Applies SQL migration files from database/migrations/ to the active backend.
+ *
+ * Behaviour per backend:
+ *   docker  → runs all pending .sql files in sorted order (idempotent via _migrations table).
+ *   supabase → skips automatic migration; logs step-by-step instructions for the dashboard.
+ *
+ * Supabase schema setup (one-time):
+ *   1. Supabase Dashboard → SQL Editor → run database/migrations/001_initial_schema.sql
+ *   2. Database → Extensions → enable "vector"
+ */
+
 import fs from 'fs';
 import path from 'path';
-import { pool } from './pool';
+import { pool, getDbBackend } from './pool';
 
 export async function runMigrations(): Promise<void> {
+  const backend = getDbBackend();
+
+  // ------------------------------------------------------------------
+  // Supabase: skip — schema is managed via Supabase dashboard / CLI
+  // ------------------------------------------------------------------
+  if (backend === 'supabase') {
+    console.log('[Migrations] Backend=supabase — skipping automatic SQL migration runner.');
+    console.log('[Migrations] To apply the schema on Supabase (one-time):');
+    console.log('  1. Open Supabase Dashboard → SQL Editor');
+    console.log('  2. Paste and run: database/migrations/001_initial_schema.sql');
+    console.log('  3. Enable the "vector" extension: Database → Extensions → vector');
+    return;
+  }
+
+  // ------------------------------------------------------------------
+  // Docker / local Postgres: run SQL migration files
+  // ------------------------------------------------------------------
   const migrationsDir = path.resolve(__dirname, '../../../../database/migrations');
   console.log(`[Migrations] Scanning ${migrationsDir}...`);
 
@@ -17,7 +48,7 @@ export async function runMigrations(): Promise<void> {
 
   const client = await pool.connect();
   try {
-    // Migration table to track applied scripts
+    // Migration tracking table
     await client.query(`
       CREATE TABLE IF NOT EXISTS _migrations (
         id SERIAL PRIMARY KEY,

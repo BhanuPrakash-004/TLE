@@ -8,6 +8,10 @@ Orchestrates:
 5. Vector embeddings generation (all-MiniLM-L6-v2, 384-dim)
 6. Dual persistence (PostgreSQL + pgvector / JSON store)
 7. Production of human-readable Ingestion Summary Report
+
+DB_BACKEND selector (reads from .env):
+  DB_BACKEND=docker   -> uses DATABASE_URL (local Docker Postgres+pgvector)
+  DB_BACKEND=supabase -> uses SUPABASE_DB_URL (Supabase cloud Postgres)
 """
 
 import os
@@ -16,7 +20,7 @@ import json
 import time
 import argparse
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env
@@ -27,6 +31,45 @@ from integrity import verify_corpus_integrity
 from extractor import extract_document
 from chunker import chunk_document
 from embeddings import generate_embeddings
+
+
+def resolve_db_url(override: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve the effective PostgreSQL connection string based on DB_BACKEND.
+
+    Priority:
+      1. CLI --db-url argument (override)
+      2. DB_BACKEND=supabase -> SUPABASE_DB_URL
+      3. DB_BACKEND=docker   -> DATABASE_URL
+
+    Returns None if no valid URL is found (JSON-only mode).
+    """
+    if override:
+        return override
+
+    backend = os.environ.get("DB_BACKEND", "docker").lower().strip()
+
+    if backend == "supabase":
+        url = os.environ.get("SUPABASE_DB_URL", "")
+        if not url or "[YOUR-PASSWORD]" in url:
+            print(
+                "[DB] DB_BACKEND=supabase but SUPABASE_DB_URL is not configured "
+                "(still contains [YOUR-PASSWORD] placeholder or is empty). "
+                "Skipping PostgreSQL persistence — JSON artifacts only."
+            )
+            return None
+        print("[DB] Backend: Supabase (cloud Postgres)")
+        return url
+
+    # Docker / local Postgres
+    url = os.environ.get("DATABASE_URL", "")
+    if url:
+        print("[DB] Backend: Docker Postgres+pgvector")
+        return url
+
+    print("[DB] No DATABASE_URL found. Skipping PostgreSQL persistence — JSON artifacts only.")
+    return None
+
 
 def run_ingestion_pipeline(
     pack_dir: str,
@@ -44,6 +87,7 @@ def run_ingestion_pipeline(
     print(f"=== Starting Ingestion Pipeline ===")
     print(f"Corpus Pack: {pack_dir}")
     print(f"Output Directory: {output_dir}")
+    print(f"DB Backend: {os.environ.get('DB_BACKEND', 'docker').upper()}")
 
     # Step 1: Corpus Integrity Check
     print("\n[Step 1/5] Verifying corpus integrity against manifest & hashes...")
@@ -175,6 +219,7 @@ def run_ingestion_pipeline(
         print(f"Failed documents: {len(failed_docs)}")
 
     # Step 5: Vector Embeddings
+    dim = 0
     if generate_vectors and all_chunks:
         print("\n[Step 5/5] Generating vector embeddings...")
         texts_to_embed = [c["text"] for c in all_chunks]
@@ -193,15 +238,23 @@ def run_ingestion_pipeline(
     with open(chunks_json_path, "w", encoding="utf-8") as f:
         json.dump(all_chunks, f, indent=2, ensure_ascii=False)
 
-    # Optional: Persist into PostgreSQL if connection configured and available
+    # Optional: Persist into PostgreSQL if connection is configured and available
     db_saved = False
-    if db_url or os.environ.get("DATABASE_URL"):
-        url = db_url or os.environ.get("DATABASE_URL")
+    effective_url = resolve_db_url(db_url)
+    backend_label = os.environ.get("DB_BACKEND", "docker").lower()
+
+    if effective_url:
         try:
             import psycopg
-            with psycopg.connect(url) as conn:
+
+            # Build connect kwargs — add SSL for Supabase
+            connect_kwargs: dict = {"conninfo": effective_url}
+            if backend_label == "supabase":
+                connect_kwargs["sslmode"] = "require"
+
+            with psycopg.connect(**connect_kwargs) as conn:
                 with conn.cursor() as cur:
-                    print("\nPersisting documents and chunks to PostgreSQL...")
+                    print(f"\nPersisting documents and chunks to PostgreSQL ({backend_label})...")
                     for d in processed_docs:
                         cur.execute("""
                             INSERT INTO documents (
@@ -236,7 +289,7 @@ def run_ingestion_pipeline(
                         ))
                 conn.commit()
                 db_saved = True
-                print("Successfully persisted to PostgreSQL.")
+                print(f"Successfully persisted to PostgreSQL ({backend_label}).")
         except Exception as e:
             print(f"[PostgreSQL Note]: Direct DB write skipped ({str(e)}). JSON artifacts preserved.")
 
@@ -251,6 +304,7 @@ Execution Timestamp: {datetime.utcnow().isoformat()}Z
 Pack: {pack_name} (Event: {event_id})
 As-Of Date Clock: {as_of}
 Elapsed Processing Time: {elapsed} seconds
+DB Backend: {backend_label.upper()}
 
 CORPUS INTEGRITY & CHECKSUM AUDIT:
 --------------------------------------------------------------------------------
@@ -306,11 +360,12 @@ FLAGGED / DAMAGED ITEMS LOG:
         "chunks_json_path": chunks_json_path,
     }
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Runemark Batch Ingestion Pipeline")
     parser.add_argument("--pack", default="03_Ragnarok Trial of the Nine Realms/dev_pack_E5", help="Path to dev_pack directory")
     parser.add_argument("--output", default=None, help="Output directory for normalized data")
-    parser.add_argument("--db-url", default=None, help="PostgreSQL connection string")
+    parser.add_argument("--db-url", default=None, help="PostgreSQL connection string (overrides DB_BACKEND env selection)")
     parser.add_argument("--skip-embeddings", action="store_true", help="Skip embedding generation")
 
     args = parser.parse_args()
