@@ -145,7 +145,7 @@ Construct 2 to 3 mitigation claims in this JSON array structure:
       systemPrompt,
       userPrompt,
       fallbackClaims,
-      { maxTokens: 1200 }
+      { maxTokens: 450 }
     );
 
     const validatedClaims: GroundedClaim[] = (

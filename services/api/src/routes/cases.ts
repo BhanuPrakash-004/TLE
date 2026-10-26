@@ -150,7 +150,7 @@ Answer the user's question directly with clear bullet points, citing exact evide
         ...history.slice(-4),
         { role: 'user', content: userPrompt },
       ],
-      { maxTokens: 800 }
+      { maxTokens: 450 }
     );
 
     const effectiveCited = targetDocId

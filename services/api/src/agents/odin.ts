@@ -298,7 +298,7 @@ Return JSON with exact keys:
         systemPrompt,
         userPrompt,
         { executiveSummary: fallbackSummary, projection: nextQuarterOutlook.projection },
-        { maxTokens: 900 }
+        { maxTokens: 450 }
       );
 
       if (llmResult.executiveSummary && llmResult.executiveSummary.length > 80) {

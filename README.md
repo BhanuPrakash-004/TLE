@@ -152,6 +152,7 @@ Create a `.env` file in the root directory:
 PORT=3000
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 LLM_MODEL=google/gemini-3.5-flash-lite
+MAX_TOKENS=450
 EMBEDDING_MODEL=nvidia/nemotron-3.5-embed-8b:free
 
 # Optional: PostgreSQL Database

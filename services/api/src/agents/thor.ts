@@ -144,7 +144,7 @@ Construct exactly 2 or 3 claims in this JSON array structure:
       systemPrompt,
       userPrompt,
       fallbackClaims,
-      { maxTokens: 1200 }
+      { maxTokens: 450 }
     );
 
     const validatedClaims: GroundedClaim[] = (
