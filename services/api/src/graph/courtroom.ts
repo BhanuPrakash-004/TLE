@@ -102,8 +102,61 @@ export class CourtroomOrchestrator {
     const verdict = await this.heimdall.verifyEvent(question, this.chunks, asOfDate);
     emitStep('HEIMDALL_VERIFY_COMPLETE', 1, 'Heimdall', 'Event verified and traps quarantined', verdict);
 
-    if (!verdict.isReal) {
-      throw new Error(`Court dismissed: Event could not be verified in Runemark corpus. ${verdict.reasoning}`);
+    if (!verdict.isReal || !verdict.isActive) {
+      const dismissReason = !verdict.isReal
+        ? `Event could not be verified in Runemark corpus (unverified rumor or decoy). ${verdict.reasoning}`
+        : `Event is no longer active or ongoing as of simulated clock ${asOfDate}. ${verdict.reasoning}`;
+
+      emitStep('COURT_DISMISSED', 1, 'Heimdall', `Court dismissed at Step 1: ${dismissReason}`, verdict);
+
+      trace.caseId = `CASE-DISMISSED-${Date.now()}`;
+      trace.finalBriefing = {
+        briefingId: `BRIEFING-DISMISSED-${Date.now()}`,
+        caseId: trace.caseId,
+        asOfDate,
+        isDismissed: true,
+        dismissalReason: dismissReason,
+        executiveSummary: `🛑 COURT DISMISSED AT INITIAL STEP (GATEKEEPER): As of ${asOfDate}, the alleged disruption could not be authenticated. ${dismissReason}`,
+        exposureTable: {
+          thorExposure: { min: 0, max: 0, commodity: 'Dismissed at Step 1', unit: 'MT/month' },
+          lokiExposure: { min: 0, max: 0, commodity: 'Dismissed at Step 1', unit: 'MT/month' },
+          odinExposure: { min: 0, max: 0, commodity: 'Dismissed at Step 1', unit: 'MT/month' },
+        },
+        establishedFindings: [],
+        contestedFindings: [],
+        concededFindings: [],
+        nextQuarterOutlook: {
+          projection: 'No active commercial exposure identified. Disruption inquiry was dismissed at initial gatekeeper verification.',
+          statedAssumptions: [
+            `Simulated clock strictly enforced: ${asOfDate}.`,
+            'Unverified tabloid rumors and retracted notices quarantined.',
+          ],
+          riskFactors: ['Fabricated rumor, retracted notice, or decoy detected.'],
+        },
+        inlineCitations: verdict.discreditedDocIds.map((docId) => ({
+          citationMarker: `[${docId}]`,
+          docId,
+          paragraph: 'P1',
+          outlet: 'Quarantined Trap / Social Rumor',
+          tier: 4 as any,
+          pubDate: asOfDate,
+          quote: 'Claim contradicted or discredited by official notices.',
+        })),
+        sufficiencyLoopTriggered: false,
+        roundsCompleted: 1,
+      };
+
+      trace.agentMemories = {
+        heimdall: this.heimdall.getMemory(),
+      };
+      trace.elapsedSeconds = Math.round((Date.now() - startTime) / 10) / 100;
+      emitStep('TRIAL_CONCLUDED', 1, 'Court', 'Trial dismissed at Step 1 with full execution trace', {
+        roundsCompleted: 1,
+        elapsedSeconds: trace.elapsedSeconds,
+        isDismissed: true,
+      });
+
+      return trace;
     }
 
     const caseFile = this.heimdall.createCaseFile(question, verdict);

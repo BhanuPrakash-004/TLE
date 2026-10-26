@@ -217,6 +217,8 @@ export interface ExecutiveBriefing {
   }>;
   sufficiencyLoopTriggered: boolean;
   roundsCompleted: number;
+  isDismissed?: boolean;
+  dismissalReason?: string;
 }
 
 // ==========================================

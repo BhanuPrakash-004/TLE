@@ -6,6 +6,8 @@ export interface ScoredChunk {
   reliabilityTier: number;
   pubDate: string;
   score: number;
+  denseSimilarity?: number;
+  sparseScore?: number;
   paragraphRefs: string[];
   matchedTerms: string[];
 }
@@ -60,13 +62,36 @@ const KNOWN_SECTORS = [
 ];
 
 /**
+ * Computes exact Cosine Similarity between two N-dimensional embedding vectors:
+ * cos(theta) = (A • B) / (||A|| * ||B||)
+ */
+export function computeCosineSimilarity(a: number[], b: number[]): number {
+  if (!a || !b || a.length === 0 || b.length === 0 || a.length !== b.length) {
+    return 0;
+  }
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
  * Dynamically retrieves relevant, clock-verified document chunks for any user question.
+ * Applies BM25 term weighting, Dense Vector Cosine Similarity (if vectors exist),
+ * Temporal Clock Filtering (asOfDate), and Reliability Tier Reranking.
  */
 export function retrieveDynamicContext(
   question: string,
   chunks: DocumentChunk[],
   asOfDate: string = '2027-01-25',
-  topK: number = 14
+  topK: number = 14,
+  queryEmbedding?: number[]
 ): RetrievalResult {
   const qLower = question.toLowerCase();
 
@@ -137,15 +162,26 @@ export function retrieveDynamicContext(
       // We still score it as low credibility so Thor/Loki can debate it in cross-examination
     }
 
-    // 3. Keyword Scoring
+    // 3. Hybrid Lexical (BM25-style) & Dense Vector Cosine Scoring
     let matchCount = 0;
+    let tfSum = 0;
     const matchedTerms: string[] = [];
 
     for (const term of queryTerms) {
       if (textLower.includes(term)) {
         matchCount++;
         matchedTerms.push(term);
+        // Term frequency calculation
+        const occurrences = (textLower.match(new RegExp(term, 'g')) || []).length;
+        tfSum += occurrences / (occurrences + 1.2);
       }
+    }
+
+    // Dense Vector Cosine Similarity (if query vector provided and chunk has vector)
+    let denseSim = 0;
+    const chunkVector = (c as any).embedding || (c.metadata as any)?.embedding;
+    if (queryEmbedding && chunkVector && Array.isArray(chunkVector) && chunkVector.length === queryEmbedding.length) {
+      denseSim = computeCosineSimilarity(queryEmbedding, chunkVector);
     }
 
     // Metadata boosts
@@ -162,15 +198,19 @@ export function retrieveDynamicContext(
     }
 
     const tierWeight = TIER_WEIGHTS[tier] || 0.8;
-    const baseScore = (matchCount / Math.max(queryTerms.length, 1)) * metaBoost;
-    const finalScore = baseScore * tierWeight;
+    const sparseScore = (tfSum / Math.max(queryTerms.length, 1)) * metaBoost;
+    // Hybrid fusion: if dense similarity exists, weight 60% dense + 40% sparse; else 100% sparse
+    const hybridBase = denseSim > 0 ? (0.6 * denseSim + 0.4 * sparseScore) : sparseScore;
+    const finalScore = hybridBase * tierWeight;
 
-    if (matchCount > 0 || metaBoost > 1.35) {
+    if (matchCount > 0 || metaBoost > 1.35 || denseSim > 0.45) {
       scored.push({
         chunk: c,
         docId,
         reliabilityTier: tier,
         pubDate,
+        denseSimilarity: denseSim > 0 ? Math.round(denseSim * 1000) / 1000 : undefined,
+        sparseScore: Math.round(sparseScore * 1000) / 1000,
         score: Math.round(finalScore * 1000) / 1000,
         paragraphRefs: (c as any).paragraph_refs || c.paragraphRefs || ['P1'],
         matchedTerms,
