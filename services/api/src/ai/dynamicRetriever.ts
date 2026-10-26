@@ -111,6 +111,15 @@ export function retrieveDynamicContext(
     targetSectors.push('Wheat', 'Maize', 'Grain');
   }
 
+  // Extract explicit document IDs (e.g. ORV-0012, ATL-0001, WLD-0021) and paragraph references (e.g. P1, P2)
+  const docIdRegex = /\b([A-Z]{3}-\d{4})\b/i;
+  const explicitDocIdMatch = question.match(docIdRegex);
+  const explicitDocId = explicitDocIdMatch ? explicitDocIdMatch[1].toUpperCase() : null;
+
+  const paraRegex = /\b(P\d+)\b/i;
+  const explicitParaMatch = question.match(paraRegex);
+  const explicitPara = explicitParaMatch ? explicitParaMatch[1].toUpperCase() : null;
+
   // Extract query keywords (ignoring short stopwords)
   const stopwords = new Set([
     'what', 'when', 'where', 'which', 'who', 'whom', 'this', 'that', 'these',
@@ -134,11 +143,13 @@ export function retrieveDynamicContext(
   for (const c of chunks) {
     const meta: any = c.metadata || {};
     const pubDate = meta.PUB_DATE || meta.pubDate || '';
-    const docId = (c as any).doc_id || c.docId || meta.DOC_ID || '';
+    const docId = ((c as any).doc_id || c.docId || meta.DOC_ID || '').toUpperCase();
     const tier = parseInt(meta.RELIABILITY || meta.reliability || '3', 10);
     const chunkCountry = (meta.COUNTRY || meta.country || '').toLowerCase();
     const chunkSector = (meta.SECTOR || meta.sector || '').toLowerCase();
+    const titleLower = (meta.TITLE || '').toLowerCase();
     const textLower = (c.text || '').toLowerCase();
+    const paragraphRefs: string[] = (c as any).paragraph_refs || c.paragraphRefs || ['P1'];
 
     // 1. Strict Clock Violation Rule (NFR3): Cannot cite anything published after asOfDate
     if (pubDate && asOfDate && pubDate > asOfDate) {
@@ -167,13 +178,40 @@ export function retrieveDynamicContext(
     let tfSum = 0;
     const matchedTerms: string[] = [];
 
+    // Direct Doc ID & Paragraph targeting
+    let isDirectDocMatch = false;
+    if (explicitDocId && docId === explicitDocId) {
+      isDirectDocMatch = true;
+      matchCount += 20;
+      tfSum += 20.0;
+      matchedTerms.push(explicitDocId);
+
+      if (explicitPara && paragraphRefs.includes(explicitPara)) {
+        matchCount += 10;
+        tfSum += 10.0;
+        matchedTerms.push(explicitPara);
+      }
+    }
+
+    // Keyword & Title / ID matching
     for (const term of queryTerms) {
+      let termMatched = false;
       if (textLower.includes(term)) {
-        matchCount++;
-        matchedTerms.push(term);
-        // Term frequency calculation
+        termMatched = true;
         const occurrences = (textLower.match(new RegExp(term, 'g')) || []).length;
         tfSum += occurrences / (occurrences + 1.2);
+      }
+      if (docId.toLowerCase().includes(term)) {
+        termMatched = true;
+        tfSum += 4.0;
+      }
+      if (titleLower.includes(term)) {
+        termMatched = true;
+        tfSum += 2.0;
+      }
+      if (termMatched) {
+        matchCount++;
+        matchedTerms.push(term);
       }
     }
 
@@ -201,9 +239,11 @@ export function retrieveDynamicContext(
     const sparseScore = (tfSum / Math.max(queryTerms.length, 1)) * metaBoost;
     // Hybrid fusion: if dense similarity exists, weight 60% dense + 40% sparse; else 100% sparse
     const hybridBase = denseSim > 0 ? (0.6 * denseSim + 0.4 * sparseScore) : sparseScore;
-    const finalScore = hybridBase * tierWeight;
+    const directDocBonus = isDirectDocMatch ? 50.0 : 0;
+    const finalScore = (hybridBase + directDocBonus) * tierWeight;
 
-    if (matchCount > 0 || metaBoost > 1.35 || denseSim > 0.45) {
+    // Only include if actual lexical/doc match exists or high dense similarity
+    if (matchCount > 0 || denseSim > 0.45) {
       scored.push({
         chunk: c,
         docId,
@@ -212,7 +252,7 @@ export function retrieveDynamicContext(
         denseSimilarity: denseSim > 0 ? Math.round(denseSim * 1000) / 1000 : undefined,
         sparseScore: Math.round(sparseScore * 1000) / 1000,
         score: Math.round(finalScore * 1000) / 1000,
-        paragraphRefs: (c as any).paragraph_refs || c.paragraphRefs || ['P1'],
+        paragraphRefs,
         matchedTerms,
       });
     }
